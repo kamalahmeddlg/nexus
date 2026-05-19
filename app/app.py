@@ -23,35 +23,42 @@ from PIL import Image
 from werkzeug.utils import secure_filename
 
 
-# ==============================
+# =====================================
 # BASE CONFIG
-# ==============================
-APP_DIR = Path(__file__).resolve().parent
-PROJECT_DIR = APP_DIR.parent
+# =====================================
 
-MODEL_DIR = PROJECT_DIR / "model"
-MODEL_PATH = MODEL_DIR / "best_finetuned_model.keras"
+BASE_DIR = Path(__file__).resolve().parent
 
-UPLOAD_DIR = APP_DIR / "static" / "uploads"
+MODEL_PATH = BASE_DIR / "model" / "best_finetuned_model.keras"
 
-ALLOWED_EXTENSIONS = {"png", "jpg", "jpeg", "webp", "bmp"}
-
-MAX_FILE_SIZE_MB = 16
-IMAGE_SIZE = (224, 224)
-
-THRESHOLD = 0.5
+UPLOAD_DIR = BASE_DIR / "static" / "uploads"
 
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
+ALLOWED_EXTENSIONS = {
+    "png",
+    "jpg",
+    "jpeg",
+    "webp",
+    "bmp"
+}
 
-# ==============================
+IMAGE_SIZE = (224, 224)
+
+MAX_FILE_SIZE_MB = 16
+
+THRESHOLD = 0.5
+
+
+# =====================================
 # FLASK APP
-# ==============================
+# =====================================
+
 app = Flask(__name__)
 
 app.secret_key = os.environ.get(
     "SECRET_KEY",
-    os.urandom(24)
+    "super-secret-key"
 )
 
 app.config["UPLOAD_FOLDER"] = str(UPLOAD_DIR)
@@ -63,39 +70,31 @@ app.config["MAX_CONTENT_LENGTH"] = (
 CORS(app)
 
 
-# ==============================
-# GPU MEMORY FIX
-# ==============================
-gpus = tf.config.experimental.list_physical_devices("GPU")
-
-if gpus:
-    try:
-        for gpu in gpus:
-            tf.config.experimental.set_memory_growth(gpu, True)
-
-    except RuntimeError as e:
-        print(e)
-
-
-# ==============================
+# =====================================
 # LOAD MODEL
-# ==============================
+# =====================================
+
+print("Loading model...")
+
 if not MODEL_PATH.exists():
     raise FileNotFoundError(
-        f"Model file not found: {MODEL_PATH}"
+        f"Model not found: {MODEL_PATH}"
     )
 
-print("Loading AI model...")
-
-model = tf.keras.models.load_model(MODEL_PATH)
+model = tf.keras.models.load_model(
+    MODEL_PATH,
+    compile=False
+)
 
 print("Model loaded successfully!")
 
 
-# ==============================
+# =====================================
 # HELPER FUNCTIONS
-# ==============================
-def allowed_file(filename: str) -> bool:
+# =====================================
+
+def allowed_file(filename):
+
     return (
         "." in filename
         and filename.rsplit(".", 1)[1].lower()
@@ -103,9 +102,10 @@ def allowed_file(filename: str) -> bool:
     )
 
 
-def validate_image(image_path: Path) -> bool:
+def validate_image(path):
+
     try:
-        with Image.open(image_path) as img:
+        with Image.open(path) as img:
             img.verify()
 
         return True
@@ -114,24 +114,32 @@ def validate_image(image_path: Path) -> bool:
         return False
 
 
-def preprocess_image(image_path: Path) -> np.ndarray:
+def preprocess_image(path):
 
-    img = Image.open(image_path).convert("RGB")
+    img = Image.open(path).convert("RGB")
 
     img = img.resize(IMAGE_SIZE)
 
-    arr = np.array(img, dtype=np.float32)
+    img_array = np.array(
+        img,
+        dtype=np.float32
+    )
 
-    arr = np.expand_dims(arr, axis=0)
+    img_array = np.expand_dims(
+        img_array,
+        axis=0
+    )
 
-    arr = tf.keras.applications.efficientnet.preprocess_input(arr)
+    img_array = tf.keras.applications.efficientnet.preprocess_input(
+        img_array
+    )
 
-    return arr
+    return img_array
 
 
-def predict_image(image_path: Path) -> dict:
+def predict_image(path):
 
-    img_array = preprocess_image(image_path)
+    img_array = preprocess_image(path)
 
     prediction = model.predict(
         img_array,
@@ -143,11 +151,15 @@ def predict_image(image_path: Path) -> dict:
     safe_prob = 1.0 - nsfw_prob
 
     if nsfw_prob >= THRESHOLD:
+
         label = "NSFW"
+
         confidence = nsfw_prob
 
     else:
+
         label = "SAFE"
+
         confidence = safe_prob
 
     return {
@@ -171,16 +183,16 @@ def predict_image(image_path: Path) -> dict:
 
 
 def save_processed_image(
-    input_path: Path,
-    output_path: Path,
-    label: str
+    input_path,
+    output_path,
+    label
 ):
 
     img = cv2.imread(str(input_path))
 
     if img is None:
         raise ValueError(
-            "Could not read uploaded image."
+            "Could not read image"
         )
 
     if label == "NSFW":
@@ -192,6 +204,7 @@ def save_processed_image(
         )
 
     else:
+
         processed = img
 
     cv2.imwrite(
@@ -200,33 +213,10 @@ def save_processed_image(
     )
 
 
-def cleanup_old_uploads(
-    max_files: int = 100
-):
+# =====================================
+# ROUTES
+# =====================================
 
-    files = sorted(
-        [
-            f for f in UPLOAD_DIR.iterdir()
-            if f.is_file()
-        ],
-
-        key=lambda x: x.stat().st_mtime,
-
-        reverse=True,
-    )
-
-    for old_file in files[max_files:]:
-
-        try:
-            old_file.unlink()
-
-        except OSError:
-            pass
-
-
-# ==============================
-# MAIN WEBSITE ROUTE
-# ==============================
 @app.route("/", methods=["GET", "POST"])
 def index():
 
@@ -234,9 +224,7 @@ def index():
 
         if "image" not in request.files:
 
-            flash(
-                "No image file found."
-            )
+            flash("No image uploaded")
 
             return redirect(
                 url_for("index")
@@ -246,9 +234,7 @@ def index():
 
         if file.filename == "":
 
-            flash(
-                "Please select an image."
-            )
+            flash("No file selected")
 
             return redirect(
                 url_for("index")
@@ -256,9 +242,7 @@ def index():
 
         if not allowed_file(file.filename):
 
-            flash(
-                "Invalid file type."
-            )
+            flash("Invalid file type")
 
             return redirect(
                 url_for("index")
@@ -266,11 +250,11 @@ def index():
 
         try:
 
-            original_name = secure_filename(
+            filename = secure_filename(
                 file.filename
             )
 
-            extension = original_name.rsplit(
+            ext = filename.rsplit(
                 ".",
                 1
             )[1].lower()
@@ -278,11 +262,11 @@ def index():
             unique_id = uuid.uuid4().hex
 
             upload_filename = (
-                f"{unique_id}.{extension}"
+                f"{unique_id}.{ext}"
             )
 
             result_filename = (
-                f"{unique_id}_result.{extension}"
+                f"{unique_id}_result.{ext}"
             )
 
             upload_path = (
@@ -302,7 +286,7 @@ def index():
                 )
 
                 flash(
-                    "Uploaded file is not a valid image."
+                    "Invalid image"
                 )
 
                 return redirect(
@@ -319,8 +303,6 @@ def index():
                 prediction["label"]
             )
 
-            cleanup_old_uploads()
-
             return render_template(
                 "result.html",
 
@@ -330,49 +312,46 @@ def index():
 
                 label=prediction["label"],
 
-                confidence=prediction[
-                    "confidence"
-                ],
+                confidence=prediction["confidence"],
 
-                nsfw_probability=prediction[
-                    "nsfw_probability"
-                ],
+                nsfw_probability=prediction["nsfw_probability"],
 
-                safe_probability=prediction[
-                    "safe_probability"
-                ],
+                safe_probability=prediction["safe_probability"],
             )
 
         except Exception as e:
 
-            flash(
-                f"Error while processing image: {str(e)}"
-            )
+            flash(str(e))
 
             return redirect(
                 url_for("index")
             )
 
-    return render_template("index.html")
+    return render_template(
+        "index.html"
+    )
 
 
-# ==============================
-# BROWSER EXTENSION API
-# ==============================
+# =====================================
+# API ROUTE
+# =====================================
+
 @app.route("/api/check", methods=["POST"])
 def api_check():
 
-    data = request.get_json()
-
-    image_url = data.get("image_url")
-
-    if not image_url:
-
-        return jsonify({
-            "error": "No image URL"
-        }), 400
-
     try:
+
+        data = request.get_json()
+
+        image_url = data.get(
+            "image_url"
+        )
+
+        if not image_url:
+
+            return jsonify({
+                "error": "No image URL"
+            }), 400
 
         response = requests.get(
             image_url,
@@ -397,7 +376,9 @@ def api_check():
             missing_ok=True
         )
 
-        return jsonify(prediction)
+        return jsonify(
+            prediction
+        )
 
     except Exception as e:
 
@@ -406,9 +387,10 @@ def api_check():
         }), 500
 
 
-# ==============================
+# =====================================
 # HEALTH CHECK
-# ==============================
+# =====================================
+
 @app.route("/health")
 def health():
 
@@ -417,14 +399,15 @@ def health():
     }
 
 
-# ==============================
-# FILE SIZE ERROR
-# ==============================
+# =====================================
+# ERROR HANDLER
+# =====================================
+
 @app.errorhandler(413)
-def too_large(_error):
+def too_large(error):
 
     flash(
-        f"File is too large. Maximum size is {MAX_FILE_SIZE_MB} MB."
+        f"File too large. Max {MAX_FILE_SIZE_MB} MB"
     )
 
     return redirect(
@@ -432,9 +415,10 @@ def too_large(_error):
     )
 
 
-# ==============================
+# =====================================
 # CACHE CONTROL
-# ==============================
+# =====================================
+
 @app.after_request
 def add_header(response):
 
@@ -443,20 +427,20 @@ def add_header(response):
     return response
 
 
-# ==============================
-# START APP
-# ==============================
+# =====================================
+# MAIN
+# =====================================
+
 if __name__ == "__main__":
 
     port = int(
         os.environ.get(
             "PORT",
-            7860
+            10000
         )
     )
 
     app.run(
         host="0.0.0.0",
-        port=port,
-        debug=False
+        port=port
     )
