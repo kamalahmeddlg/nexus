@@ -94,7 +94,6 @@ print("Model loaded successfully!")
 # =====================================
 
 def allowed_file(filename):
-
     return (
         "." in filename
         and filename.rsplit(".", 1)[1].lower()
@@ -103,114 +102,56 @@ def allowed_file(filename):
 
 
 def validate_image(path):
-
     try:
         with Image.open(path) as img:
             img.verify()
-
         return True
-
     except Exception:
         return False
 
 
 def preprocess_image(path):
-
     img = Image.open(path).convert("RGB")
-
     img = img.resize(IMAGE_SIZE)
-
-    img_array = np.array(
-        img,
-        dtype=np.float32
-    )
-
-    img_array = np.expand_dims(
-        img_array,
-        axis=0
-    )
-
-    img_array = tf.keras.applications.efficientnet.preprocess_input(
-        img_array
-    )
-
+    img_array = np.array(img, dtype=np.float32)
+    img_array = np.expand_dims(img_array, axis=0)
+    img_array = tf.keras.applications.efficientnet.preprocess_input(img_array)
     return img_array
 
 
 def predict_image(path):
-
     img_array = preprocess_image(path)
-
-    prediction = model.predict(
-        img_array,
-        verbose=0
-    )
-
+    prediction = model.predict(img_array, verbose=0)
     nsfw_prob = float(prediction[0][0])
-
     safe_prob = 1.0 - nsfw_prob
 
     if nsfw_prob >= THRESHOLD:
-
         label = "NSFW"
-
         confidence = nsfw_prob
-
     else:
-
         label = "SAFE"
-
         confidence = safe_prob
 
     return {
         "label": label,
-
-        "confidence": round(
-            confidence * 100,
-            2
-        ),
-
-        "nsfw_probability": round(
-            nsfw_prob * 100,
-            2
-        ),
-
-        "safe_probability": round(
-            safe_prob * 100,
-            2
-        ),
+        "confidence": round(confidence * 100, 2),
+        "nsfw_probability": round(nsfw_prob * 100, 2),
+        "safe_probability": round(safe_prob * 100, 2),
     }
 
 
-def save_processed_image(
-    input_path,
-    output_path,
-    label
-):
-
+def save_processed_image(input_path, output_path, label):
     img = cv2.imread(str(input_path))
 
     if img is None:
-        raise ValueError(
-            "Could not read image"
-        )
+        raise ValueError("Could not read image")
 
     if label == "NSFW":
-
-        processed = cv2.GaussianBlur(
-            img,
-            (61, 61),
-            0
-        )
-
+        processed = cv2.GaussianBlur(img, (61, 61), 0)
     else:
-
         processed = img
 
-    cv2.imwrite(
-        str(output_path),
-        processed
-    )
+    cv2.imwrite(str(output_path), processed)
 
 
 # =====================================
@@ -219,83 +160,38 @@ def save_processed_image(
 
 @app.route("/", methods=["GET", "POST"])
 def index():
-
     if request.method == "POST":
-
         if "image" not in request.files:
-
             flash("No image uploaded")
-
-            return redirect(
-                url_for("index")
-            )
+            return redirect(url_for("index"))
 
         file = request.files["image"]
 
         if file.filename == "":
-
             flash("No file selected")
-
-            return redirect(
-                url_for("index")
-            )
+            return redirect(url_for("index"))
 
         if not allowed_file(file.filename):
-
             flash("Invalid file type")
-
-            return redirect(
-                url_for("index")
-            )
+            return redirect(url_for("index"))
 
         try:
-
-            filename = secure_filename(
-                file.filename
-            )
-
-            ext = filename.rsplit(
-                ".",
-                1
-            )[1].lower()
-
+            filename = secure_filename(file.filename)
+            ext = filename.rsplit(".", 1)[1].lower()
             unique_id = uuid.uuid4().hex
-
-            upload_filename = (
-                f"{unique_id}.{ext}"
-            )
-
-            result_filename = (
-                f"{unique_id}_result.{ext}"
-            )
-
-            upload_path = (
-                UPLOAD_DIR / upload_filename
-            )
-
-            result_path = (
-                UPLOAD_DIR / result_filename
-            )
+            upload_filename = f"{unique_id}.{ext}"
+            result_filename = f"{unique_id}_result.{ext}"
+            upload_path = UPLOAD_DIR / upload_filename
+            result_path = UPLOAD_DIR / result_filename
 
             file.save(upload_path)
 
             if not validate_image(upload_path):
+                upload_path.unlink(missing_ok=True)
+                flash("Invalid image")
+                return redirect(url_for("index"))
 
-                upload_path.unlink(
-                    missing_ok=True
-                )
-
-                flash(
-                    "Invalid image"
-                )
-
-                return redirect(
-                    url_for("index")
-                )
-
-            prediction = predict_image(
-                upload_path
-            )
+            prediction = predict_image(upload_path)
 
             save_processed_image(
                 upload_path,
@@ -305,31 +201,19 @@ def index():
 
             return render_template(
                 "result.html",
-
                 original_image=upload_filename,
-
                 result_image=result_filename,
-
                 label=prediction["label"],
-
                 confidence=prediction["confidence"],
-
                 nsfw_probability=prediction["nsfw_probability"],
-
                 safe_probability=prediction["safe_probability"],
             )
 
         except Exception as e:
-
             flash(str(e))
+            return redirect(url_for("index"))
 
-            return redirect(
-                url_for("index")
-            )
-
-    return render_template(
-        "index.html"
-    )
+    return render_template("index.html")
 
 
 # =====================================
@@ -338,53 +222,25 @@ def index():
 
 @app.route("/api/check", methods=["POST"])
 def api_check():
-
     try:
-
         data = request.get_json()
-
-        image_url = data.get(
-            "image_url"
-        )
+        image_url = data.get("image_url")
 
         if not image_url:
+            return jsonify({"error": "No image URL"}), 400
 
-            return jsonify({
-                "error": "No image URL"
-            }), 400
-
-        response = requests.get(
-            image_url,
-            timeout=10
-        )
-
-        image = Image.open(
-            BytesIO(response.content)
-        ).convert("RGB")
-
-        temp_path = (
-            UPLOAD_DIR / "temp.jpg"
-        )
-
+        response = requests.get(image_url, timeout=10)
+        image = Image.open(BytesIO(response.content)).convert("RGB")
+        temp_path = UPLOAD_DIR / "temp.jpg"
         image.save(temp_path)
 
-        prediction = predict_image(
-            temp_path
-        )
+        prediction = predict_image(temp_path)
+        temp_path.unlink(missing_ok=True)
 
-        temp_path.unlink(
-            missing_ok=True
-        )
-
-        return jsonify(
-            prediction
-        )
+        return jsonify(prediction)
 
     except Exception as e:
-
-        return jsonify({
-            "error": str(e)
-        }), 500
+        return jsonify({"error": str(e)}), 500
 
 
 # =====================================
@@ -393,10 +249,7 @@ def api_check():
 
 @app.route("/health")
 def health():
-
-    return {
-        "status": "ok"
-    }
+    return {"status": "ok"}
 
 
 # =====================================
@@ -405,14 +258,8 @@ def health():
 
 @app.errorhandler(413)
 def too_large(error):
-
-    flash(
-        f"File too large. Max {MAX_FILE_SIZE_MB} MB"
-    )
-
-    return redirect(
-        url_for("index")
-    )
+    flash(f"File too large. Max {MAX_FILE_SIZE_MB} MB")
+    return redirect(url_for("index"))
 
 
 # =====================================
@@ -421,9 +268,7 @@ def too_large(error):
 
 @app.after_request
 def add_header(response):
-
     response.cache_control.no_store = True
-
     return response
 
 
@@ -432,15 +277,5 @@ def add_header(response):
 # =====================================
 
 if __name__ == "__main__":
-
-    port = int(
-        os.environ.get(
-            "PORT",
-            10000
-        )
-    )
-
-    app.run(
-        host="0.0.0.0",
-        port=port
-    )
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
